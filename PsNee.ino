@@ -307,21 +307,54 @@ void setup()
 	DEBUG_FLUSH; // empty serial transmit buffer
 }
 
-struct SubChannelQ
+union SubQ
 {
-	uint8_t control_mode;
-	uint8_t data[9];
-	uint16_t crc;
+	struct
+	{
+		union
+		{
+			uint8_t control_adr;
+			
+			// adr and control is swapped here due a to a way compiler orders bit fields
+			struct
+			{
+				uint8_t adr     : 4;
+				uint8_t control : 4;
+			};
+		};
+		
+		union
+		{
+			struct TOC
+			{
+				uint8_t track_number;
+				uint8_t point;
+				
+				struct MSF
+				{
+					uint8_t minute;
+					uint8_t second;
+					uint8_t frame;
+				} address;
+				uint8_t reserved;
+				uint8_t data[3];
+			} toc;
+			uint8_t data[9];
+		};
+		uint16_t unknown;
+	};
+	
+	uint8_t raw[12];
 };
 
 void loop()
 {
-	static byte scbuf[12] = {0}; // We will be capturing PSX "SUBQ" packets, there are 12 bytes per valid read.
+	SubQ scq; // We will be capturing PSX "SUBQ" packets, there are 12 bytes per valid read.
 	static unsigned int timeout_clock_counter = 0;
 	static byte bitbuf = 0;   // SUBQ bit storage
 	static bool sample = 0;
 	static byte bitpos = 0;
-	byte scpos = 0;           // scbuf position
+	byte scpos = 0;           // scq raw position
 
 	// start with a small delay, which can be necessary in cases where the MCU loops too quickly
 	// and picks up the laster SUBQ trailing end
@@ -359,7 +392,7 @@ start:
 	}
 
 	// one byte done
-	scbuf[scpos] = bitbuf;
+	scq.raw[scpos] = bitbuf;
 	scpos++;
 	bitbuf = 0;
 
@@ -368,53 +401,15 @@ start:
 		goto start;
 	interrupts(); // end critical section
 
-	struct SubChannelQ &scq = *(SubChannelQ *)scbuf;
-
 	// log SUBQ packets. We only have 12ms to get the logs written out. Slower MCUs get less formatting.
-#ifdef ATTINY_X5
-	if(!(scbuf[0] == 0 && scbuf[1] == 0 && scbuf[2] == 0 && scbuf[3] == 0))  // a bad sector read is all 0 except for the CRC fields. Don't log it.
+	for(unsigned int i = 0; i < 12; ++i)
 	{
-		for(int i = 0; i < 12; i++)
-		{
-			if(scbuf[i] < 0x10)
-				DEBUG_PRINT("0"); // padding
-			DEBUG_PRINTHEX(scbuf[i]);
-		}
-		DEBUG_PRINTLN("");
-	}
-#else
-
-	/*
-	  if (!(scbuf[0] == 0 && scbuf[1] == 0 && scbuf[2] == 0 && scbuf[3] == 0)) {
-	    for (int i = 0; i < 12; i++) {
-	      if (scbuf[i] < 0x10) {
-	        DEBUG_PRINT("0"); // padding
-	      }
-	      DEBUG_PRINTHEX(scbuf[i]);
-	      DEBUG_PRINT(" ");
-	    }
-	    DEBUG_PRINTLN("");
-	  }
-	*/
-	uint32_t zero = 0;
-	if(memcmp(scbuf, &zero, sizeof(uint32_t)))
-	{
-		DEBUG_PRINTHEX(scq.control_mode >> 4);
+		if(scq.raw[i] < 0x10)
+			DEBUG_PRINT("0");  // padding
+		DEBUG_PRINTHEX(scq.raw[i]);
 		DEBUG_PRINT(" ");
-		DEBUG_PRINTHEX(scq.control_mode & 0x0f);
-		DEBUG_PRINT(" ");
-
-		for(unsigned int i = 0; i < 9; ++i)
-		{
-			if(scq.data[i] < 0x10)
-				DEBUG_PRINT("0");  // padding
-			DEBUG_PRINTHEX(scq.data[i]);
-			DEBUG_PRINT(" ");
-		}
-		DEBUG_PRINTHEX(scq.crc);
-		DEBUG_PRINTLN("");
 	}
-#endif
+	DEBUG_PRINTLN("");
 
 	// check if read head is in wobble area
 	// We only want to unlock game discs (0x41) and only if the read head is in the outer TOC area.
@@ -422,23 +417,20 @@ start:
 	// All this logic is because we don't know if the HC-05 is actually processing a getSCEX() command.
 	// Hysteresis is used because older drives exhibit more variation in read head positioning.
 	// While the laser lens moves to correct for the error, they can pick up a few TOC sectors.
-	static byte hysteresis  = 0;
-	boolean isDataSector = (((scbuf[0] & 0x40) == 0x40) && (((scbuf[0] & 0x10) == 0) && ((scbuf[0] & 0x80) == 0)));
-
-	if(
-	        (isDataSector &&  scbuf[1] == 0x00 &&  scbuf[6] == 0x00) &&   // [0] = 41 means psx game disk. the other 2 checks are garbage protection
-	        (scbuf[2] == 0xA0 || scbuf[2] == 0xA1 || scbuf[2] == 0xA2 ||      // if [2] = A0, A1, A2 ..
-	         (scbuf[2] == 0x01 && (scbuf[3] >= 0x98 || scbuf[3] <= 0x02)))  // .. or = 01 but then [3] is either > 98 or < 02
-	  )
-		hysteresis++;
-	else if(hysteresis > 0 &&
-	        ((scbuf[0] == 0x01 || isDataSector) && (scbuf[1] == 0x00 /*|| scbuf[1] == 0x01*/) &&  scbuf[6] == 0x00)
-	       )  // This CD has the wobble into CD-DA space. (started at 0x41, then went into 0x01)
-		hysteresis++;
+	static byte hysteresis = 0;
+	
+	// the sector is in Lead-In TOC area and TOC is valid (garbage protection)
+	if(scq.adr == 1 && !scq.toc.track_number && !scq.toc.reserved &&                          // reserved is always 0
+	  (scq.toc.point == 0xA0 || scq.toc.point == 0xA1 || scq.toc.point == 0xA2 ||             // it's First Track Number (0xA0), Last Track Number (0xA1) or Lead-Out (0xA2)
+	   scq.toc.point == 1 && (scq.toc.address.minute >= 152 || scq.toc.address.minute <= 2))) // or Track 1 located before 2 or after 152 minutes
+	{
+		// if it's data sector or audio sector where CD has the wobble into CD-DA space (started at 0x41, then went into 0x01)
+		if(scq.control & (1 << 2) || hysteresis > 0)
+			++hysteresis;
+	}
 	else if(hysteresis > 0)
-		hysteresis--; // None of the above. Initial detection was noise. Decrease the counter.
-
-
+		--hysteresis;
+	
 	// hysteresis value "optimized" using very worn but working drive on ATmega328 @ 16Mhz
 	// should be fine on other MCUs and speeds, as the PSX dictates SUBQ rate
 	if(hysteresis >= 14)
@@ -447,11 +439,8 @@ start:
 		// Hysteresis naturally goes to 0 otherwise (the read head moved).
 		hysteresis = 11;
 
-#ifdef ATTINY_X5
 		DEBUG_PRINTLN("!");
-#else
-		DEBUG_PRINTLN("INJECT!INJECT!INJECT!INJECT!INJECT!INJECT!");
-#endif
+		
 #if defined(ARDUINO_BOARD)
 		digitalWrite(LED_BUILTIN, HIGH);
 #endif
@@ -476,6 +465,7 @@ start:
 		if(!pu22mode)
 			pinMode(gate_wfck, INPUT); // high-z the line, we're done
 		pinMode(DATA, INPUT); // high-z the line, we're done
+		
 #if defined(ARDUINO_BOARD)
 		digitalWrite(LED_BUILTIN, LOW);
 #endif
