@@ -33,17 +33,17 @@
 //  - ATmega based > easy to use, fast and nice features for development, recommended
 //  - ATtiny based > for minimal installs
 
-#include <stdint.h>
-
+// modchip configuration
 #define ARDUINO_BOARD
-
 // #define ATTINY_X5
 
-// #define APPLY_PSONE_PAL_BIOS_PATCH
+// PSX configuration
+#define FIXED_REGION 'A' // Set PSNee to only work with the specified region. Slightly improves boot times. Values: 'E' (SCEE, PAL), 'A' (SCEA, US) or 'I' (SCEI, JP)
+//#define APPLY_PSONE_PAL_BIOS_PATCH
 
 #define PSNEEDEBUG
 
-#include <avr/pgmspace.h>
+#include <limits.h>
 
 #if defined(ARDUINO_BOARD)
 
@@ -116,76 +116,69 @@ SoftwareSerial mySerial(-1, 3); // RX, TX. (RX -1 = off)
 #define DEBUG_FLUSH
 #endif
 
-#define NOP __asm__ __volatile__ ("nop\n\t")
-
 // Setup() detects which (of 2) injection methods this PSX board requires, then stores it in pu22mode.
-boolean pu22mode;
+bool pu22mode;
 
 // Timing
 const int delay_between_bits = 4000;      // 250 bits/s (microseconds) (ATtiny 8Mhz works from 3950 to 4100)
 const int delay_between_injections = 90;  // 72 in oldcrow. PU-22+ work best with 80 to 100 (milliseconds)
 
-// borrowed from AttyNee. Bitmagic to get to the SCEX strings stored in flash (because Harvard architecture)
-bool readBit(int index, const unsigned char *ByteSet)
+// inverted UART bit writing routine
+void inject_bit(bool b)
 {
-	int byte_index = index >> 3;
-	byte bits = pgm_read_byte(&(ByteSet[byte_index]));
-	int  bit_index = index & 0x7; // same as (index - byte_index<<3) or (index%8)
-	byte mask = 1 << bit_index;
+	// pinMode(DATA, OUTPUT) is used more than it has to be but that's fine.
+	if(b)
+	{
+		pinMode(DATA, OUTPUT);
+		bitClear(GATEWFCKPORT, DATABIT); // data low
+		delayMicroseconds(delay_between_bits);
+	}
+	else
+	{
+		if(pu22mode)
+		{
+			pinMode(DATA, OUTPUT);
+			unsigned long now = micros();
+			do
+			{
+				bool wfck_sample = bitRead(GATEWFCKPORT, GATEWFCKBIT);
+				bitWrite(DATAPORT, DATABIT, wfck_sample); // output wfck signal on data pin
+			} while((micros() - now) < delay_between_bits);
+		}
+		else   // PU-18 or lower mode
+		{
+			pinMode(DATA, INPUT);
+			delayMicroseconds(delay_between_bits);
+		}
+	}
+}
 
-	return 0 != (bits & mask);
+// inverted UART implementation with one start bit and two stop bits, no parity
+void inject_byte(uint8_t b)
+{
+	// START bit
+	inject_bit(0);
+	
+	// data
+	for(uint8_t i = 0; i < CHAR_BIT; ++i)
+	{
+		// no variable shift operation on AVR, that's why we don't do it as b & (1 << i)
+		inject_bit(b & 1);
+		b >>= 1;
+	}
+	
+	// two STOP bits
+	inject_bit(1);
+	inject_bit(1);
 }
 
 void inject_SCEX(char region)
 {
-	// SCEE: 1 00110101 00, 1 00111101 00, 1 01011101 00, 1 01011101 00
-	// SCEA: 1 00110101 00, 1 00111101 00, 1 01011101 00, 1 01111101 00
-	// SCEI: 1 00110101 00, 1 00111101 00, 1 01011101 00, 1 01101101 00
-	// const boolean SCEEData[44] = {1,0,0,1,1,0,1,0,1,0,0,1,0,0,1,1,1,1,0,1,0,0,1,0,1,0,1,1,1,0,1,0,0,1,0,1,0,1,1,1,0,1,0,0};
-	// const boolean SCEAData[44] = {1,0,0,1,1,0,1,0,1,0,0,1,0,0,1,1,1,1,0,1,0,0,1,0,1,0,1,1,1,0,1,0,0,1,0,1,0,1,1,1,0,1,0,0};
-	// const boolean SCEIData[44] = {1,0,0,1,1,0,1,0,1,0,0,1,0,0,1,1,1,1,0,1,0,0,1,0,1,0,1,1,1,0,1,0,0,1,0,1,0,1,1,1,0,1,0,0};
-	static const PROGMEM unsigned char SCEEData[] =
-	{
-		0b01011001, 0b11001001, 0b01001011, 0b01011101, 0b11101010, 0b00000010
-	};
-	static const PROGMEM unsigned char SCEAData[] =
-	{
-		0b01011001, 0b11001001, 0b01001011, 0b01011101, 0b11111010, 0b00000010
-	};
-	static const PROGMEM unsigned char SCEIData[] =
-	{
-		0b01011001, 0b11001001, 0b01001011, 0b01011101, 0b11011010, 0b00000010
-	};
+	char SCEx[] = {'S', 'C', 'E', region};
 
-	// pinMode(DATA, OUTPUT) is used more than it has to be but that's fine.
-	for(byte bit_counter = 0; bit_counter < 44; bit_counter++)
-	{
-		if(readBit(bit_counter, region == 'e' ? SCEEData : region == 'a' ? SCEAData : SCEIData) == 0)
-		{
-			pinMode(DATA, OUTPUT);
-			bitClear(GATEWFCKPORT, DATABIT); // data low
-			delayMicroseconds(delay_between_bits);
-		}
-		else
-		{
-			if(pu22mode)
-			{
-				pinMode(DATA, OUTPUT);
-				unsigned long now = micros();
-				do
-				{
-					bool wfck_sample = bitRead(GATEWFCKPORT, GATEWFCKBIT);
-					bitWrite(DATAPORT, DATABIT, wfck_sample); // output wfck signal on data pin
-				} while((micros() - now) < delay_between_bits);
-			}
-			else   // PU-18 or lower mode
-			{
-				pinMode(DATA, INPUT);
-				delayMicroseconds(delay_between_bits);
-			}
-		}
-	}
-
+	for(uint8_t i = 0; i < sizeof(SCEx); ++i)
+		inject_byte((uint8_t)SCEx[i]);
+	
 	pinMode(DATA, OUTPUT);
 	bitClear(GATEWFCKPORT, DATABIT); // pull data low
 	delay(delay_between_injections);
@@ -458,9 +451,17 @@ start:
 
 		// inject symbols now. 2 x 3 runs seems optimal to cover all boards
 		for(byte loop_counter = 0; loop_counter < 2; loop_counter++)
-			//      inject_SCEX('e'); // e = SCEE, a = SCEA, i = SCEI
-			inject_SCEX('a'); // injects all 3 regions by default
-			//      inject_SCEX('i'); // optimize boot time by sending only your console region letter (all 3 times per loop)
+		{
+#ifdef FIXED_REGION
+			inject_SCEX(FIXED_REGION);
+			inject_SCEX(FIXED_REGION);
+			inject_SCEX(FIXED_REGION);
+#else
+			inject_SCEX('E'); // E = SCEE, A = SCEA, I = SCEI
+			inject_SCEX('A'); // injects all 3 regions by default
+			inject_SCEX('I'); // optimize boot time by sending only your console region letter (all 3 times per loop)
+#endif
+		}
 
 		if(!pu22mode)
 			pinMode(gate_wfck, INPUT); // high-z the line, we're done
