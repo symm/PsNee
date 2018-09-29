@@ -33,66 +33,65 @@
 //  - ATmega based > easy to use, fast and nice features for development, recommended
 //  - ATtiny based > for minimal installs
 
-// modchip configuration
+// modchip hardware
 #define ARDUINO_BOARD
-// #define ATTINY_X5
+//#define ATTINY_X5
 
 // PSX configuration
 #define FIXED_REGION 'A' // Set PSNee to only work with the specified region. Slightly improves boot times. Values: 'E' (SCEE, PAL), 'A' (SCEA, US) or 'I' (SCEI, JP)
 //#define APPLY_PSONE_PAL_BIOS_PATCH
 
+// miscellaneous
 #define PSNEEDEBUG
 
 #include <limits.h>
 
 #if defined(ARDUINO_BOARD)
-
 // board pins (code requires porting to reflect any changes)
-#if defined(APPLY_PSONE_PAL_BIOS_PATCH)
-#define BIOS_A18 4          // connect to PSOne BIOS A18 (pin 31 on that chip)
-#define BIOS_D2  5          // connect to PSOne BIOS D2 (pin 15 on that chip)
-#endif
-#define sqck 6          // connect to PSX HC-05 SQCK pin
-#define subq 7          // connect to PSX HC-05 SUBQ pin
-#define DATA 8          // connect to point 6 in old modchip diagrams
-#define gate_wfck 9     // connect to point 5 in old modchip diagrams
-// MCU I/O definitions
-#define SUBQPORT PIND       // MCU port for the 2 SUBQ sampling inputs
-#define SQCKBIT 6           // PD6 "SQCK" < Mechacon pin 26 (PU-7 and early PU-8 Mechacons: pin 41)
-#define SUBQBIT 7           // PD7 "SUBQ" < Mechacon pin 24 (PU-7 and early PU-8 Mechacons: pin 39)
-#define GATEWFCKPORT PINB   // MCU port for the gate input (used for WFCK)
-#define DATAPORT PORTB      // MCU port for the gate input (used for WFCK)
-#define GATEWFCKBIT 1       // PB1
-#define DATABIT 0           // PB0
-#if defined(APPLY_PSONE_PAL_BIOS_PATCH)
-#define BIOSPATCHPORTIN  PIND
-#define BIOSPATCHPORTOUT PORTD
-#define BIOSPATCHDDR     DDRD
-#define BIOS_A18_BIT 4
-#define BIOS_D2_BIT  5
-#endif
-#elif defined(ATTINY_X5) // ATtiny 25/45/85
-// extras
-#define USINGSOFTWARESERIAL
+#define SQCK     6 // connect to PSX HC-05 SQCK pin
+#define SUBQ     7 // connect to PSX HC-05 SUBQ pin
+#define CEI      8 // connect to point 6 in old modchip diagrams
+#define WFCK     9 // connect to point 5 in old modchip diagrams
+#define BIOS_A18 4 // connect to PSOne BIOS A18 (pin 31 on that chip)
+#define BIOS_D2  5 // connect to PSOne BIOS D2 (pin 15 on that chip)
 
+// MCU I/O definitions
+#define SUBQ_PI      PIND     // MCU input port for SQCK/SUBQ sampling inputs
+#define SQCK_BIT     SQCK     // PD6 "SQCK" < Mechacon pin 26 (PU-7 and early PU-8 Mechacons: pin 41)
+#define SUBQ_BIT     SUBQ     // PD7 "SUBQ" < Mechacon pin 24 (PU-7 and early PU-8 Mechacons: pin 39)
+#define CEI_PI       PINB     // MCU input port for WFCK/CEI
+#define CEI_PO       PORTB    // MCU output port for CEI
+#define CEI_BIT      0        // PB0
+#define WFCK_BIT     1        // PB1
+#define BIOS_PI      PIND
+#define BIOS_PO      PORTD
+#define BIOS_PD      DDRD
+#define BIOS_A18_BIT BIOS_A18
+#define BIOS_D2_BIT  BIOS_D2
+#elif defined(ATTINY_X5) // ATtiny 25/45/85
 // board pins (Do not change. Changing pins requires adjustments to MCU I/O definitions)
-#define sqck 0
-#define subq 1
-#define DATA 2
-#define gate_wfck 4
+#define SQCK 0
+#define SUBQ 1
+#define CEI  2
+#define WFCK 4
 #define debugtx 3
 
 // MCU I/O definitions
-#define SUBQPORT PINB
-#define SQCKBIT 0
-#define SUBQBIT 1
-#define GATEWFCKPORT PINB
-#define DATAPORT PORTB
-#define GATEWFCKBIT 4
-#define DATABIT 2
+#define SUBQ_PI PINB
+#define SQCK_BIT 0
+#define SUBQ_BIT 1
+#define CEI_PI PINB
+#define CEI_PO PORTB
+#define WFCK_BIT 4
+#define CEI_BIT 2
+
 #if defined(APPLY_PSONE_PAL_BIOS_PATCH)
 #error "ATtiny does not support PAL PSOne patch yet!"
 #endif
+
+// extras
+#define USINGSOFTWARESERIAL
+
 #else
 #error "Select a board!"
 #endif
@@ -126,28 +125,28 @@ const int delay_between_injections = 90;  // 72 in oldcrow. PU-22+ work best wit
 // inverted UART bit writing routine
 void inject_bit(bool b)
 {
-	// pinMode(DATA, OUTPUT) is used more than it has to be but that's fine.
+	// pinMode(CEI, OUTPUT) is used more than it has to be but that's fine.
 	if(b)
 	{
-		pinMode(DATA, OUTPUT);
-		bitClear(GATEWFCKPORT, DATABIT); // data low
+		pinMode(CEI, OUTPUT);
+		bitClear(CEI_PI, CEI_BIT); // data low
 		delayMicroseconds(delay_between_bits);
 	}
 	else
 	{
 		if(pu22mode)
 		{
-			pinMode(DATA, OUTPUT);
+			pinMode(CEI, OUTPUT);
 			unsigned long now = micros();
 			do
 			{
-				bool wfck_sample = bitRead(GATEWFCKPORT, GATEWFCKBIT);
-				bitWrite(DATAPORT, DATABIT, wfck_sample); // output wfck signal on data pin
+				bool wfck_sample = bitRead(CEI_PI, WFCK_BIT);
+				bitWrite(CEI_PO, CEI_BIT, wfck_sample); // output wfck signal on data pin
 			} while((micros() - now) < delay_between_bits);
 		}
 		else   // PU-18 or lower mode
 		{
-			pinMode(DATA, INPUT);
+			pinMode(CEI, INPUT);
 			delayMicroseconds(delay_between_bits);
 		}
 	}
@@ -179,8 +178,8 @@ void inject_SCEX(char region)
 	for(uint8_t i = 0; i < sizeof(SCEx); ++i)
 		inject_byte((uint8_t)SCEx[i]);
 	
-	pinMode(DATA, OUTPUT);
-	bitClear(GATEWFCKPORT, DATABIT); // pull data low
+	pinMode(CEI, OUTPUT);
+	bitClear(CEI_PI, CEI_BIT); // pull data low
 	delay(delay_between_injections);
 }
 
@@ -191,16 +190,16 @@ void NTSC_fix()
 	pinMode(BIOS_D2, INPUT);
 
 	delay(100); // this is right after SQCK appeared. wait a little to avoid noise
-	while(!bitRead(BIOSPATCHPORTIN, BIOS_A18_BIT))
+	while(!bitRead(BIOS_PI, BIOS_A18_BIT))
 		;  // wait for stage 1 A18 pulse
 	delay(1350); // wait through stage 1 of A18 activity
 
 	noInterrupts(); // start critical section
-	while(!bitRead(BIOSPATCHPORTIN, BIOS_A18_BIT))
+	while(!bitRead(BIOS_PI, BIOS_A18_BIT))
 		;  // wait for priming A18 pulse
 	delayMicroseconds(17); // max 17us for 16Mhz ATmega (maximize this when tuning!)
-	bitClear(BIOSPATCHPORTOUT, BIOS_D2_BIT); // store a low
-	bitSet(BIOSPATCHDDR, BIOS_D2_BIT); // D2 = output. drags line low now
+	bitClear(BIOS_PO, BIOS_D2_BIT); // store a low
+	bitSet(BIOS_PD, BIOS_D2_BIT); // D2 = output. drags line low now
 	delayMicroseconds(4); // min 2us for 16Mhz ATmega, 8Mhz requires 3us (minimize this when tuning, after maximizing first us delay!)
 	bitClear(DDRD, BIOS_D2_BIT); // D2 = input / high-z
 	interrupts(); // end critical section
@@ -217,10 +216,10 @@ void NTSC_fix()
 
 void setup()
 {
-	pinMode(DATA, INPUT);
-	pinMode(gate_wfck, INPUT);
-	pinMode(subq, INPUT); // PSX subchannel bits
-	pinMode(sqck, INPUT); // PSX subchannel clock
+	pinMode(CEI, INPUT);
+	pinMode(WFCK, INPUT);
+	pinMode(SUBQ, INPUT); // PSX subchannel bits
+	pinMode(SQCK, INPUT); // PSX subchannel clock
 
 #if defined(PSNEEDEBUG) && defined(USINGSOFTWARESERIAL)
 	pinMode(debugtx, OUTPUT); // software serial tx pin
@@ -239,9 +238,9 @@ void setup()
 #endif
 
 	// wait for console power on and stable signals
-	while(!digitalRead(sqck))
+	while(!digitalRead(SQCK))
 		;
-	while(!digitalRead(gate_wfck))
+	while(!digitalRead(WFCK))
 		;
 
 	// if enabled: patches PAL PSOne consoles so they start all region games
@@ -257,9 +256,9 @@ void setup()
 	unsigned long now = millis();
 	do
 	{
-		if(digitalRead(gate_wfck) == 1)
+		if(digitalRead(WFCK) == 1)
 			highs++;
-		if(digitalRead(gate_wfck) == 0)
+		if(digitalRead(WFCK) == 0)
 			lows++;
 		delayMicroseconds(200);   // good for ~5000 reads in 1s
 	} while((millis() - now) < 1000); // sample 1s
@@ -360,7 +359,7 @@ start:
 	bitpos = 0;
 	for(; bitpos < 8; bitpos++)
 	{
-		while(bitRead(SUBQPORT, SQCKBIT) == 1)
+		while(bitRead(SUBQ_PI, SQCK_BIT) == 1)
 		{
 			// wait for clock to go low..
 			// a timeout resets the 12 byte stream in case the PSX sends malformatted clock pulses, as happens on bootup
@@ -375,10 +374,10 @@ start:
 		}
 
 		// wait for clock to go high..
-		while((bitRead(SUBQPORT, SQCKBIT)) == 0)
+		while((bitRead(SUBQ_PI, SQCK_BIT)) == 0)
 			;
 
-		sample = bitRead(SUBQPORT, SUBQBIT);
+		sample = bitRead(SUBQ_PI, SUBQ_BIT);
 		bitbuf |= sample << bitpos;
 
 		timeout_clock_counter = 0; // no problem with this bit
@@ -438,12 +437,12 @@ start:
 		digitalWrite(LED_BUILTIN, HIGH);
 #endif
 
-		pinMode(DATA, OUTPUT);
-		digitalWrite(DATA, 0); // pull data low
+		pinMode(CEI, OUTPUT);
+		digitalWrite(CEI, 0); // pull data low
 		if(!pu22mode)
 		{
-			pinMode(gate_wfck, OUTPUT);
-			digitalWrite(gate_wfck, 0);
+			pinMode(WFCK, OUTPUT);
+			digitalWrite(WFCK, 0);
 		}
 
 		// HC-05 waits for a bit of silence (pin low) before it begins decoding.
@@ -464,8 +463,8 @@ start:
 		}
 
 		if(!pu22mode)
-			pinMode(gate_wfck, INPUT); // high-z the line, we're done
-		pinMode(DATA, INPUT); // high-z the line, we're done
+			pinMode(WFCK, INPUT); // high-z the line, we're done
+		pinMode(CEI, INPUT); // high-z the line, we're done
 		
 #if defined(ARDUINO_BOARD)
 		digitalWrite(LED_BUILTIN, LOW);
