@@ -35,75 +35,105 @@
 
 // modchip hardware
 #define ARDUINO_BOARD
+//#define ATTINY_X4
 //#define ATTINY_X5
 
 // PSX configuration
-#define FIXED_REGION 'A' // Set PSNee to only work with the specified region. Slightly improves boot times. Values: 'E' (SCEE, PAL), 'A' (SCEA, US) or 'I' (SCEI, JP)
-//#define APPLY_PSONE_PAL_BIOS_PATCH
+#define FIXED_REGION 'E' // Set PSNee to only work with the specified region. Slightly improves boot times. Values: 'E' (SCEE, PAL), 'A' (SCEA, US) or 'I' (SCEI, JP)
+#define APPLY_PSONE_PAL_BIOS_PATCH
 
 // miscellaneous
 #define PSNEEDEBUG
+
+static const uint8_t HYSTERESIS = 10;
 
 #include <limits.h>
 
 #if defined(ARDUINO_BOARD)
 // board pins (code requires porting to reflect any changes)
-#define SQCK     6 // connect to PSX HC-05 SQCK pin
-#define SUBQ     7 // connect to PSX HC-05 SUBQ pin
-#define CEI      8 // connect to point 6 in old modchip diagrams
-#define WFCK     9 // connect to point 5 in old modchip diagrams
-#define BIOS_A18 4 // connect to PSOne BIOS A18 (pin 31 on that chip)
-#define BIOS_D2  5 // connect to PSOne BIOS D2 (pin 15 on that chip)
+#	define SQCK     6 // connect to PSX HC-05 SQCK pin
+#	define SUBQ     7 // connect to PSX HC-05 SUBQ pin
+#	define CEI      8 // connect to point 6 in old modchip diagrams
+#	define WFCK     9 // connect to point 5 in old modchip diagrams
+#	define BIOS_A18 4 // connect to PSOne BIOS A18 (pin 31 on that chip)
+#	define BIOS_D2  5 // connect to PSOne BIOS D2 (pin 15 on that chip)
 
 // MCU I/O definitions
-#define SUBQ_PI      PIND     // MCU input port for SQCK/SUBQ sampling inputs
-#define SQCK_BIT     SQCK     // PD6 "SQCK" < Mechacon pin 26 (PU-7 and early PU-8 Mechacons: pin 41)
-#define SUBQ_BIT     SUBQ     // PD7 "SUBQ" < Mechacon pin 24 (PU-7 and early PU-8 Mechacons: pin 39)
-#define CEI_PI       PINB     // MCU input port for WFCK/CEI
-#define CEI_PO       PORTB    // MCU output port for CEI
-#define CEI_BIT      0        // PB0
-#define WFCK_BIT     1        // PB1
-#define BIOS_PI      PIND
-#define BIOS_PO      PORTD
-#define BIOS_PD      DDRD
-#define BIOS_A18_BIT BIOS_A18
-#define BIOS_D2_BIT  BIOS_D2
+#	define SUBQ_PI      PIND     // MCU input port for SQCK/SUBQ sampling inputs
+#	define SQCK_BIT     SQCK     // PD6 "SQCK" < Mechacon pin 26 (PU-7 and early PU-8 Mechacons: pin 41)
+#	define SUBQ_BIT     SUBQ     // PD7 "SUBQ" < Mechacon pin 24 (PU-7 and early PU-8 Mechacons: pin 39)
+#	define CEI_PI       PINB     // MCU input port for WFCK/CEI
+#	define CEI_PO       PORTB    // MCU output port for CEI
+#	define CEI_BIT      0        // PB0
+#	define WFCK_BIT     1        // PB1
+#	define BIOS_PI      PIND
+#	define BIOS_PO      PORTD
+#	define BIOS_PD      DDRD
+#	define BIOS_A18_BIT BIOS_A18
+#	define BIOS_D2_BIT  BIOS_D2
+#elif defined(ATTINY_X4) // ATtiny 24/44/84
+#	define SQCK     5
+#	define SUBQ     4
+#	define CEI      3
+#	define WFCK     6
+#	define BIOS_A18 8
+#	define BIOS_D2  9
+
+// used for serial debugging
+#	define DEBUG_TX 1
+
+#	define SUBQ_PI      PINA
+#	define SQCK_BIT     SQCK
+#	define SUBQ_BIT     SUBQ
+#	define CEI_PI       PINA
+#	define CEI_PO       PORTA
+#	define CEI_BIT      CEI
+#	define WFCK_BIT     WFCK
+#	define BIOS_PI      PINB
+#	define BIOS_PO      PORTB
+#	define BIOS_PD      DDRB
+#	define BIOS_A18_BIT 2
+#	define BIOS_D2_BIT  1
 #elif defined(ATTINY_X5) // ATtiny 25/45/85
-// board pins (Do not change. Changing pins requires adjustments to MCU I/O definitions)
-#define SQCK 0
-#define SUBQ 1
-#define CEI  2
-#define WFCK 4
-#define debugtx 3
+#	define SQCK     0
+#	define SUBQ     1
+#	define CEI      2
+#	define WFCK     4
+//#	define BIOS_A18 3
+//#	define BIOS_D2  5
 
-// MCU I/O definitions
-#define SUBQ_PI PINB
-#define SQCK_BIT 0
-#define SUBQ_BIT 1
-#define CEI_PI PINB
-#define CEI_PO PORTB
-#define WFCK_BIT 4
-#define CEI_BIT 2
+// used for serial debugging
+#	define DEBUG_TX 3
+
+#	define SUBQ_PI      PINB
+#	define SQCK_BIT     SQCK
+#	define SUBQ_BIT     SUBQ
+#	define CEI_PI       PINB
+#	define CEI_PO       PORTB
+#	define CEI_BIT      CEI
+#	define WFCK_BIT     WFCK
+#	define BIOS_PI      PINB
+#	define BIOS_PO      PORTB
+#	define BIOS_PD      DDRB
+#	define BIOS_A18_BIT BIOS_A18
+#	define BIOS_D2_BIT  BIOS_D2
 
 #if defined(APPLY_PSONE_PAL_BIOS_PATCH)
 #error "ATtiny does not support PAL PSOne patch yet!"
 #endif
 
-// extras
-#define USINGSOFTWARESERIAL
-
 #else
-#error "Select a board!"
+#	error "Select a board!"
 #endif
 
-#if defined(PSNEEDEBUG) && defined(USINGSOFTWARESERIAL)
+#if defined(PSNEEDEBUG) && defined(DEBUG_TX)
 #include <SoftwareSerial.h>
-SoftwareSerial mySerial(-1, 3); // RX, TX. (RX -1 = off)
+SoftwareSerial mySerial(-1, DEBUG_TX); // RX, TX. (RX -1 = off)
 #define DEBUG_PRINT(x)     mySerial.print(x)
 #define DEBUG_PRINTHEX(x)  mySerial.print(x, HEX)
 #define DEBUG_PRINTLN(x)   mySerial.println(x)
 #define DEBUG_FLUSH        mySerial.flush()
-#elif defined(PSNEEDEBUG) && !defined(USINGSOFTWARESERIAL)
+#elif defined(PSNEEDEBUG) && !defined(DEBUG_TX)
 #define DEBUG_PRINT(x)     Serial.print(x)
 #define DEBUG_PRINTHEX(x)  Serial.print(x, HEX)
 #define DEBUG_PRINTLN(x)   Serial.println(x)
@@ -201,7 +231,7 @@ void NTSC_fix()
 	bitClear(BIOS_PO, BIOS_D2_BIT); // store a low
 	bitSet(BIOS_PD, BIOS_D2_BIT); // D2 = output. drags line low now
 	delayMicroseconds(4); // min 2us for 16Mhz ATmega, 8Mhz requires 3us (minimize this when tuning, after maximizing first us delay!)
-	bitClear(DDRD, BIOS_D2_BIT); // D2 = input / high-z
+	bitClear(BIOS_PD, BIOS_D2_BIT); // D2 = input / high-z
 	interrupts(); // end critical section
 
 	// not necessary but I want to make sure these pins are now high-z again
@@ -221,16 +251,16 @@ void setup()
 	pinMode(SUBQ, INPUT); // PSX subchannel bits
 	pinMode(SQCK, INPUT); // PSX subchannel clock
 
-#if defined(PSNEEDEBUG) && defined(USINGSOFTWARESERIAL)
-	pinMode(debugtx, OUTPUT); // software serial tx pin
+#if defined(PSNEEDEBUG) && defined(DEBUG_TX)
+	pinMode(DEBUG_TX, OUTPUT); // software serial tx pin
 	mySerial.begin(115200); // 13,82 bytes in 12ms, max for softwareserial. (expected data: ~13 bytes / 12ms) // update: this is actually quicker
-#elif defined(PSNEEDEBUG) && !defined(USINGSOFTWARESERIAL)
+#elif defined(PSNEEDEBUG) && !defined(DEBUG_TX)
 	Serial.begin(500000); // 60 bytes in 12ms (expected data: ~26 bytes / 12ms) // update: this is actually quicker
+#endif
 	DEBUG_PRINT("MCU frequency: ");
 	DEBUG_PRINT(F_CPU);
 	DEBUG_PRINTLN(" Hz");
 	DEBUG_PRINTLN("Waiting for SQCK..");
-#endif
 
 #if defined(ARDUINO_BOARD)
 	pinMode(LED_BUILTIN, OUTPUT); // Blink on injection / debug.
@@ -270,7 +300,7 @@ void setup()
 	else
 		pu22mode = 0;
 
-#ifdef ATTINY_X5
+#if defined(ATTINY_X4) || defined(ATTINY_X5)
 	DEBUG_PRINT("m ");
 	DEBUG_PRINTLN(pu22mode);
 #else
@@ -425,11 +455,11 @@ start:
 	
 	// hysteresis value "optimized" using very worn but working drive on ATmega328 @ 16Mhz
 	// should be fine on other MCUs and speeds, as the PSX dictates SUBQ rate
-	if(hysteresis >= 14)
+	if(hysteresis >= HYSTERESIS)
 	{
 		// If the read head is still here after injection, resending should be quick.
 		// Hysteresis naturally goes to 0 otherwise (the read head moved).
-		hysteresis = 11;
+		hysteresis = HYSTERESIS - 3;
 
 		DEBUG_PRINTLN("!");
 		
