@@ -1,5 +1,8 @@
 // PsNee / psxdev.net version
 
+#include <limits.h>
+#include <util/delay.h>
+
 // For Arduino and ATtiny
 //
 // Quick start: Select your hardware via the #defines, compile + upload the code, install in PSX.
@@ -47,8 +50,6 @@
 
 static const uint8_t HYSTERESIS = 10;
 
-#include <limits.h>
-
 #if defined(ARDUINO_BOARD)
 // board pins (code requires porting to reflect any changes)
 #	define SQCK     6 // connect to PSX HC-05 SQCK pin
@@ -71,6 +72,7 @@ static const uint8_t HYSTERESIS = 10;
 #	define BIOS_PD      DDRD
 #	define BIOS_A18_BIT BIOS_A18
 #	define BIOS_D2_BIT  BIOS_D2
+
 #elif defined(ATTINY_X4) // ATtiny 24/44/84
 #	define SQCK     5
 #	define SUBQ     4
@@ -215,29 +217,34 @@ void inject_SCEX(char region)
 
 void NTSC_fix()
 {
-#if defined(APPLY_PSONE_PAL_BIOS_PATCH)
 	pinMode(BIOS_A18, INPUT);
 	pinMode(BIOS_D2, INPUT);
 
 	delay(100); // this is right after SQCK appeared. wait a little to avoid noise
 	while(!bitRead(BIOS_PI, BIOS_A18_BIT))
 		;  // wait for stage 1 A18 pulse
+	
 	delay(1350); // wait through stage 1 of A18 activity
 
 	noInterrupts(); // start critical section
 	while(!bitRead(BIOS_PI, BIOS_A18_BIT))
 		;  // wait for priming A18 pulse
-	delayMicroseconds(17); // max 17us for 16Mhz ATmega (maximize this when tuning!)
+	
+	// delayMicroseconds() yields different delay under ATtiny which breaks timing
+	// (~1.3us difference comparing to ATmega), use avr-gcc _delay_us() instead
+	_delay_us(15.2); // the value has been maximized for stable operation under ATmega and ATtiny
+	
 	bitClear(BIOS_PO, BIOS_D2_BIT); // store a low
 	bitSet(BIOS_PD, BIOS_D2_BIT); // D2 = output. drags line low now
-	delayMicroseconds(4); // min 2us for 16Mhz ATmega, 8Mhz requires 3us (minimize this when tuning, after maximizing first us delay!)
+
+	// _delay_us() is imprecise for small values, 0.3 here yields ~1.1us on ATmega and ~1.4us on ATtiny
+	_delay_us(0.3); // the value has been minimized for stable operation under ATmega and ATtiny
 	bitClear(BIOS_PD, BIOS_D2_BIT); // D2 = input / high-z
 	interrupts(); // end critical section
 
 	// not necessary but I want to make sure these pins are now high-z again
 	pinMode(BIOS_A18, INPUT);
 	pinMode(BIOS_D2, INPUT);
-#endif
 }
 
 // --------------------------------------------------
@@ -251,11 +258,13 @@ void setup()
 	pinMode(SUBQ, INPUT); // PSX subchannel bits
 	pinMode(SQCK, INPUT); // PSX subchannel clock
 
-#if defined(PSNEEDEBUG) && defined(DEBUG_TX)
+#ifdef PSNEEDEBUG
+#ifdef DEBUG_TX
 	pinMode(DEBUG_TX, OUTPUT); // software serial tx pin
 	mySerial.begin(115200); // 13,82 bytes in 12ms, max for softwareserial. (expected data: ~13 bytes / 12ms) // update: this is actually quicker
-#elif defined(PSNEEDEBUG) && !defined(DEBUG_TX)
+#else
 	Serial.begin(500000); // 60 bytes in 12ms (expected data: ~26 bytes / 12ms) // update: this is actually quicker
+#endif
 #endif
 	DEBUG_PRINT("MCU frequency: ");
 	DEBUG_PRINT(F_CPU);
@@ -273,8 +282,9 @@ void setup()
 	while(!digitalRead(WFCK))
 		;
 
-	// if enabled: patches PAL PSOne consoles so they start all region games
+#ifdef APPLY_PSONE_PAL_BIOS_PATCH
 	NTSC_fix();
+#endif
 
 	// Board detection
 	//
@@ -419,7 +429,7 @@ start:
 	bitbuf = 0;
 
 	// repeat for all 12 bytes
-	if(scpos < 12)
+	if(scpos < sizeof(SubQ))
 		goto start;
 	interrupts(); // end critical section
 
@@ -479,7 +489,7 @@ start:
 		delay(delay_between_injections);
 
 		// inject symbols now. 2 x 3 runs seems optimal to cover all boards
-		for(byte loop_counter = 0; loop_counter < 2; loop_counter++)
+		for(uint8_t i = 0; i < 2; ++i)
 		{
 #ifdef FIXED_REGION
 			inject_SCEX(FIXED_REGION);
